@@ -62,6 +62,9 @@
 
 #include "diary.h"
 
+#include <strings.h>
+#include <time.h>
+
 #define INDEX_HDF "index.hdf"
 
 module AP_MODULE_DECLARE_DATA diary_module;
@@ -77,6 +80,15 @@ typedef struct {
     int github_flavoured;
 } diary_conf;
 
+typedef struct {
+   int year;
+   char month[3];
+   char day[3];   
+   int dayofweek_1stdayofmonth;
+   int lastdayofmonth;
+   const int dayofmonthes[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+} calendar_info;
+
 static NEOERR *diary_cs_render_cb(void *ctx, char *s)
 {
     ap_rputs(s, (request_rec *)ctx);
@@ -89,12 +101,38 @@ static int diary_handle_index(request_rec *r, diary_conf *conf)
     CSPARSE *cs;
     NEOERR *cs_err;
     STRING cs_err_str;
+    time_t now;   
+    struct tm *tm;
+    calendar_info cal;
+    char buf[BUF_SIZE];
+    //int cal_year, cal_today, cal_dayofweek_1stdayofmonth, cal_lastdayofmonth;
+    //char cal_month[3], cal_day[3];
 
     hdf_init(&hdf);
     hdf_set_int_value(hdf, "index", 1);
     hdf_set_value(hdf, "hdf.loadpaths.1", conf->path);
     hdf_set_value(hdf, "diary.title", conf->title);
     hdf_set_value(hdf, "diary.uri", conf->uri);
+   
+    /* Setup the calendar data */
+    now = time(NULL);
+    tm = localtime(&now);
+    cal.year = tm->tm_year + 1900;
+    cal.lastdayofmonth = cal.dayofmonthes[tm->tm_mon];   
+    if(tm->tm_mon == 1 && cal.year%4 == 0 && cal.year%100 != 0 || cal.year%400 == 0)
+     ++cal.lastdayofmonth;
+    sprintf(cal.month, "%02d", tm->tm_mon + 1);
+    sprintf(cal.day, "%02d", tm->tm_mday);
+    /* Get the day of week of the 1st day of this month */
+    tm->tm_mday = 1;
+    strftime(buf, BUF_SIZE, "%w", tm); /* The day of week as a decimal (sunday is 0) */
+    cal.dayofweek_1stdayofmonth = atoi(buf);
+   
+    hdf_set_int_value(hdf, "cal.year", cal.year);
+    hdf_set_value(hdf, "cal.month", cal.month);
+    hdf_set_value(hdf, "cal.today", cal.day);
+    hdf_set_int_value(hdf, "cal.lastdayofmonth", cal.lastdayofmonth);
+    hdf_set_int_value(hdf, "cal.dayofweek_1stdayofmonth", cal.dayofweek_1stdayofmonth);
 
     cs_err = hdf_read_file(hdf, INDEX_HDF);
     if(cs_err){
@@ -178,7 +216,7 @@ static int diary_handle_feed_rss(request_rec *r, diary_conf *conf)
         string_init(&cs_err_str);
         nerr_error_string(cs_err, &cs_err_str);
         ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r,
-                      "error in cs_parse_file(): %s", cs_err_str.buf);
+                      "error in cs_parse_string(): %s", cs_err_str.buf);
         cs_destroy(&cs);
         hdf_destroy(&hdf);
         return HTTP_INTERNAL_SERVER_ERROR;
